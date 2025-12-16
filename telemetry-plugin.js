@@ -16,6 +16,12 @@ class TelemetryPlugin {
             height: null,
             resolution: null
         };
+        this._fpsState = {
+        lastFrames: 0,
+        lastTime: performance.now(),
+         fps: null
+        };
+
 
         // Buffer tracking
         this.bufferStartTime = null;
@@ -116,35 +122,56 @@ class TelemetryPlugin {
     // PLAYER METRICS
 
     getPlayerMetrics() {
-        const stats = this.video.getVideoPlaybackQuality?.() || {};
-        const buffered = this.video.buffered;
+    const stats = this.video.getVideoPlaybackQuality?.();
+    const buffered = this.video.buffered;
 
-        let bufferLength = 0;
-        if (buffered && buffered.length > 0) {
-            const end = buffered.end(buffered.length - 1);
-            bufferLength = Math.max(0, end - this.video.currentTime);
-        }
-
-        return {
-            droppedFrames: stats.droppedVideoFrames || 0,
-            decodedFrames: stats.totalVideoFrames || 0,
-            fps: stats.totalVideoFrames ? (stats.totalVideoFrames / ((stats.totalFrameDelay || 1) / 1000)) : null,
-            bufferLengthSec: bufferLength
-        };
+    // -------- Buffer length --------
+    let bufferLength = 0;
+    if (buffered && buffered.length > 0) {
+        const end = buffered.end(buffered.length - 1);
+        bufferLength = Math.max(0, end - this.video.currentTime);
     }
 
-    // --------------------------------------------------------
-    // QUEUE LOGIC
-    // --------------------------------------------------------
+    // -------- FPS calculation --------
+    const now = performance.now();
+    const elapsedMs = now - this._fpsState.lastTime;
+
+    if (stats?.totalVideoFrames != null && elapsedMs >= 1000) {
+        const deltaFrames = stats.totalVideoFrames - this._fpsState.lastFrames;
+        const deltaTimeSec = elapsedMs / 1000;
+
+        this._fpsState.fps = deltaFrames / deltaTimeSec;
+
+        this._fpsState.lastFrames = stats.totalVideoFrames;
+        this._fpsState.lastTime = now;
+    }
+
+    return {
+        droppedFrames: stats?.droppedVideoFrames || 0,
+        decodedFrames: stats?.totalVideoFrames || 0,
+        fps: this._fpsState.fps,     // stable FPS
+        bufferLengthSec: bufferLength
+    };
+}
+
+
+//calling queue to make a queue and store value there 
+    log(payload) {
+        console.log(" Telemetry Event Generated:", payload);
+        this.enqueue(payload);
+    }
+
+    // Queue logic
+    
     enqueue(payload) {
         if (this.eventQueue.length >= this.config.maxQueueSize) {
             this.eventQueue.shift();
-            console.warn("⚠️ Queue full — dropped oldest event");
+            console.warn(" Queue full — dropped oldest event");
         }
         payload._retryCount = payload._retryCount || 0;
         this.eventQueue.push(payload);
     }
-
+   //once this function is set  and ruuning it keep running  and evey 5 sec difference  it runs  
     startFlushTimer() {
         setInterval(() => this.flushQueue(), this.config.flushIntervalMs);
     }
@@ -156,7 +183,7 @@ class TelemetryPlugin {
         this.isSending = true;
         const batch = this.eventQueue.splice(0, this.config.maxBatchSize);
 
-        console.log(`📤 Sending batch of ${batch.length} events…`);
+        console.log(` Sending batch of ${batch.length} events…`);
 
         try {
             const response = await fetch(this.config.endpoint, {
@@ -166,13 +193,13 @@ class TelemetryPlugin {
             });
 
             if (!response.ok) {
-                console.error("❌ Server responded with error:", response.status);
+                console.error(" Server responded with error:", response.status);
                 this.handleFailedBatch(batch);
             } else {
-                console.log("✅ Batch sent");
+                console.log(" Batch sent succesfully");
             }
         } catch (err) {
-            console.error("❌ Network send failed:", err);
+            console.error(" Network send failed:", err);
             this.handleFailedBatch(batch);
         }
 
@@ -185,29 +212,26 @@ class TelemetryPlugin {
             if (event._retryCount <= this.config.maxRetries) {
                 this.eventQueue.unshift(event);
             } else {
-                console.warn("⚠️ Telemetry dropped:", event);
+                console.warn(" Telemetry dropped:", event);
             }
         });
 
         const retry = batch[0]._retryCount;
         const delay = this.config.backoffBaseMs * Math.pow(2, retry - 1);
 
-        console.warn(`⏳ Retrying in ${delay}ms`);
+        console.warn(` Retrying in ${delay}ms`);
 
         clearTimeout(this.retryTimer);
         this.retryTimer = setTimeout(() => this.flushQueue(), delay);
     }
 
-    log(payload) {
-        console.log("📌 Telemetry Event Generated:", payload);
-        this.enqueue(payload);
-    }
+  
 
-    // --------------------------------------------------------
+ 
     // ENGAGEMENT TRACKING
-    // --------------------------------------------------------
+   
     onPlay() {
-        console.log("▶️ PLAY");
+        console.log(" PLAY");
         this.lastPlayTimestamp = Date.now();
 
         if (this.lastPauseTimestamp) {
@@ -219,7 +243,7 @@ class TelemetryPlugin {
     }
 
     onPause() {
-        console.log("⏸ PAUSE");
+        console.log(" PAUSE");
         this.lastPauseTimestamp = Date.now();
 
         if (this.lastPlayTimestamp) {
@@ -229,11 +253,11 @@ class TelemetryPlugin {
         this.log(this.base("PAUSE"));
     }
 
-    // --------------------------------------------------------
-    // LISTENERS
-    // --------------------------------------------------------
+   
+    // LISTENERS those function listen Hls event and browser 
+
     initListeners() {
-        console.log("🎯 Initializing listeners…");
+        console.log(" Initializing listeners…");
 
         // UPDATE QUALITY + LOG EVENT
         this.hls.on(Hls.Events.LEVEL_SWITCHED, (evt, data) => {
@@ -247,7 +271,7 @@ class TelemetryPlugin {
                 resolution: `${level.height}p`
             };
 
-            console.log("🎞 QUALITY UPDATED:", this.currentQuality);
+            console.log(" QUALITY UPDATED:", this.currentQuality);
 
             const payload = this.base("QUALITY_CHANGE");
             payload.quality = this.currentQuality;
@@ -293,6 +317,6 @@ class TelemetryPlugin {
             this.log(error);
         });
 
-        console.log("✅ Listeners initialized");
+        console.log(" Listeners initialized");
     }
 }
