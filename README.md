@@ -1,4 +1,4 @@
-# 📘 Backend Video Streaming Telemetry Service
+# 📘 Backend and Front End Video Streaming Telemetry Service
 
 A telemetry backend service for a video‑streaming application. This project collects detailed playback metrics from a frontend video player, processes them in batches, and stores them in a PostgreSQL database for analytics and monitoring.
 
